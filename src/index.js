@@ -4,4 +4,9 @@ import React from 'react'
 import ReactDOM from 'react-dom'
 import { App } from './comp/App'
 
-ReactDOM.render(<App />, document.getElementById('app'))
+const FOUNDERS = process.env.FOUNDERS
+
+ReactDOM.render(
+  <App founders={FOUNDERS && FOUNDERS.split(',')} />,
+  document.getElementById('app')
+)

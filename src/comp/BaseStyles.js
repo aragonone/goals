@@ -7,7 +7,7 @@ export const BaseStyles = createGlobalStyle`
     background: ${palette[0]};
   }
   body, button, input, h1, h2, h3 {
-    font: 300 18px/1.5 monospace;
+    font: 300 18px/1.8 monospace;
     color: ${palette[3]};
   }
   body, h1, h2, h3 {

@@ -3,12 +3,17 @@
   "version": "1.0.0",
   "bin": "./bin/aragon-goals",
   "scripts": {
-    "build": "fpack build --development --preprocess='^src/.+\\.js$:babel-loader?filename=.babelrc' ./src/index.js",
-    "watch": "fpack watch --development --preprocess='^src/.+\\.js$:babel-loader?filename=.babelrc' ./src/index.js",
-    "serve": "fpack serve --development --port 4000 --preprocess '^src/.+\\.js$:babel-loader?filename=.babelrc' ./src/index.js"
+    "build:node": "mkdir -p ./node-lib && babel src/goals.js --out-file ./node-lib/goals.js",
+    "build": "fpack build --development --no-cache --preprocess='^src/.+\\.js$:babel-loader?filename=.babelrc' ./src/index.js && cp -r public/favicon* bundle/",
+    "serve": "fpack serve --development --port 4000 --preprocess '^src/.+\\.js$:babel-loader?filename=.babelrc' ./src/index.js",
+    "prepare": "yarn build:node",
+    "start": "yarn serve"
   },
   "dependencies": {
+    "@babel/cli": "^7.2.3",
     "@babel/polyfill": "^7.2.5",
+    "chalk": "^2.4.2",
+    "cli-table": "^0.3.1",
     "react": "^16.8.0",
     "react-dom": "^16.8.0",
     "react-dropzone": "^8.0.4",
@@ -21,6 +26,7 @@
     "@babel/preset-react": "^7.0.0",
     "babel-loader": "^8.0.5",
     "babel-plugin-styled-components": "^1.10.0",
+    "babel-plugin-transform-inline-environment-variables": "^0.4.3",
     "fpack": "^0.6.8",
     "loader-runner": "^3.0.0",
     "uglify-js": "^3.4.9"

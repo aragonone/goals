@@ -4,46 +4,21 @@ const util = require('util')
 const fs = require('fs')
 const path = require('path')
 const readFile = util.promisify(fs.readFile)
+const chalk = require('chalk')
+const Table = require('cli-table')
 
-// Validate that the data structure correspond to the ratings
-const isRatings = data =>
-  data &&
-  typeof data.name === 'string' &&
-  Array.isArray(data.ratings) &&
-  data.ratings.every(
-    rating =>
-      Array.isArray(rating) &&
-      rating.length === 2 &&
-      rating.every(v => typeof v === 'number')
-  )
+const FOUNDERS = process.env.FOUNDERS
 
-// Validate that the data structure correspond to the goals
-const isGoals = data =>
-  data &&
-  Array.isArray(data.goals) &&
-  data.goals.every(
-    goal => typeof goal.id === 'number' && Array.isArray(goal.subgoals)
-  )
-
-// Add names from a goal to an array if they don’t exist yet
-const addGoalNames = (names, { owner, advisor }) => [
-  ...names,
-  ...(names.includes(owner) ? [] : [owner]),
-  ...(names.includes(advisor) ? [] : [advisor]),
-]
-
-// Get all names (advisors + owners)
-const getNames = goals =>
-  goals
-    .reduce(
-      (names, { subgoals, ...goal }) =>
-        addGoalNames(
-          subgoals.reduce((names, goal) => addGoalNames(names, goal), names),
-          goal
-        ),
-      []
-    )
-    .sort()
+const {
+  isJsonRatings,
+  isJsonGoals,
+  isMainGoal,
+  goalsFromJsonGoals,
+  getNames,
+  getGoal,
+  getRatingsRequired,
+  getDirectGoals,
+} = require('../node-lib/goals')
 
 const loadJson = async filename => {
   try {
@@ -59,45 +34,82 @@ const getGoalsAndRatings = async filenames =>
     filenames.map(filename =>
       loadJson(filename).then(data => {
         let type = 'invalid'
-        if (isRatings(data)) type = 'ratings'
-        if (isGoals(data)) type = 'goals'
+        if (isJsonRatings(data)) type = 'ratings'
+        if (isJsonGoals(data)) type = 'goals'
         return { filename, data: type === 'invalid' ? null : data, type }
       })
     )
   )
 
-const getGoalRatings = ({ id, owner, advisor }, ratings) => {
-  const results = { ownerRating: -1, advisorRating: -1 }
-  for (const { data } of ratings) {
-    for (const [goalId, value] of data.ratings) {
-      if (id === goalId) {
-        // the advisor rates the owner and vice versa
-        results[data.name === owner ? 'advisorRating' : 'ownerRating'] = value
+const collectScores = (name, goals, ratings) =>
+  ratings.reduce((scores, { name: reviewer, ratings }) => {
+    if (reviewer === name) return scores
+    return ratings.reduce((scores, [voteId, goalScores]) => {
+      const memberScore = goalScores.find(score => score[0] === name)
+      if (!memberScore) return scores
+      return [
+        ...scores,
+        [memberScore[1], isMainGoal(getGoal(voteId, goals)) ? 3 : 1],
+      ]
+    }, scores)
+  }, [])
 
-        // no need to continue once we got the owner + advisor
-        if (results.ownerRating > -1 && results.advisorRating > -1) {
-          return results
-        }
-      }
+const getResultsByName = (names, goals, ratings, founders) =>
+  names.map(name => {
+    const scores = collectScores(name, goals, ratings)
+    const scoresRequired = getRatingsRequired(name, goals, founders)
+
+    const [total, divider] = scores.reduce(
+      ([total, divider], score) => [total + score[0], divider + score[1]],
+      [0, 0]
+    )
+
+    const directGoals = getDirectGoals(goals, name)
+
+    return {
+      name,
+      scores,
+      scoresRequired,
+      directGoalsCount: directGoals.length,
+      directMainGoalsCount: directGoals.filter(isMainGoal).length,
+      isPartial: scores.length < scoresRequired.length,
+      finalScore: divider > 0 ? Math.round((total / divider) * 100) / 100 : -1,
     }
-  }
-  return results
-}
+  })
 
-const finalScore = scores => {
-  if (scores.length === 0) {
-    // n/a
-    return -1
-  }
-  const total = scores.reduce(
-    (total, score) => total + score.value * (score.subgoal ? 1 : 3),
-    0
+const displayScores = resultsByName => {
+  const resultsTable = new Table({
+    style: { compact: true, head: ['white'] },
+    head: ['Name', 'Total goals', 'Final score'],
+    colWidths: [
+      Math.max(...resultsByName.map(({ name }) => name.length)) + 2,
+      13,
+      16,
+    ],
+  })
+
+  resultsByName.forEach(
+    ({
+      name,
+      isPartial,
+      finalScore,
+      directGoalsCount,
+      directMainGoalsCount,
+    }) => {
+      resultsTable.push([
+        name,
+        `${String(directGoalsCount).padStart(2, ' ')} ${
+          directMainGoalsCount > 0 ? `(${directMainGoalsCount} main)` : ''
+        }`,
+        finalScore === -1
+          ? chalk.red('N/A')
+          : String(finalScore).padEnd(4, ' ') +
+            (isPartial ? chalk.yellow(' (partial)') : ''),
+      ])
+    }
   )
-  const divider = scores.reduce(
-    (total, score) => total + (score.subgoal ? 1 : 3),
-    0
-  )
-  return Math.round((total / divider) * 100) / 100
+
+  return resultsTable.toString()
 }
 
 const main = async () => {
@@ -105,135 +117,65 @@ const main = async () => {
     .slice(2)
     .map(name => path.join(process.cwd(), name))
 
-  const goalsAndRatings = await getGoalsAndRatings(filenames)
-  const goals = goalsAndRatings.find(data => data.type === 'goals')
-
-  if (!goals) {
-    console.log('No goals.json found.')
-    process.exit(0)
+  const founders = FOUNDERS && FOUNDERS.split(',')
+  if (!founders) {
+    console.log(
+      'No founders found. Set them using the FOUNDERS environment variable:'
+    )
+    console.log('')
+    console.log('  FOUNDERS=Tom,Jerry aragon-goals')
+    process.exit(1)
   }
 
-  const invalids = goalsAndRatings
+  const goalsAndRatings = await getGoalsAndRatings(filenames)
+  const jsonGoals = goalsAndRatings.find(data => data.type === 'goals')
+
+  if (!jsonGoals) {
+    console.log('No valid goals.json found.')
+    process.exit(1)
+  }
+
+  // Invalid files
+  goalsAndRatings
     .filter(data => data.type === 'invalid')
     .map(data => path.basename(data.filename))
     .forEach(name => {
       console.log('Invalid file:', name)
     })
 
-  const ratings = goalsAndRatings.filter(data => data.type === 'ratings')
-  // console.log(ratings)
+  const goals = goalsFromJsonGoals(jsonGoals.data)
+  const ratings = goalsAndRatings
+    .filter(data => data.type === 'ratings')
+    .map(ratings => ratings.data)
 
-  const filledGoals = goals.data.goals.map(goal => ({
-    ...goal,
-    ...getGoalRatings(goal, ratings),
-    subgoals: goal.subgoals.map(goal => ({
-      ...goal,
-      ...getGoalRatings(goal, ratings),
-    })),
-  }))
+  const names = getNames(goals, founders)
+  const resultsByName = getResultsByName(names, goals, ratings, founders)
 
-  const flattenedGoals = filledGoals.reduce((goals, goal) => {
-    const { subgoals } = goal
-    delete goal.subgoals
-    return [
-      ...goals,
-      { ...goal, subgoal: false },
-      ...subgoals.map(goal => ({ ...goal, subgoal: true })),
-    ]
-  }, [])
-
-  const totalRatings = flattenedGoals.reduce((count, goal) => {
-    if (goal.ownerRating > -1) count += 1
-    if (goal.advisorRating > -1) count += 1
-    return count
-  }, 0)
+  // Calculate total scores required / filled
+  const [totalScoresRequired, totalScoresFilled] = resultsByName.reduce(
+    (result, { scores, scoresRequired }) => [
+      result[0] + scoresRequired.length,
+      result[1] + scores.length,
+    ],
+    [0, 0]
+  )
 
   console.log('')
-  console.log(' # Stats')
-  console.log('')
+  console.log(displayScores(resultsByName))
 
+  console.log('')
   console.log(
-    ' Total goals:',
-    flattenedGoals.length,
-    `(${flattenedGoals.length * 2} ratings)`
+    ' Number of goals:',
+    goals.length,
+    `(${goals.filter(isMainGoal).length} main)`
   )
+
+  console.log('')
   console.log(
-    ` Total ratings: ${totalRatings}`,
-    totalRatings < flattenedGoals.length * 2
-      ? `(${flattenedGoals.length * 2 - totalRatings} missing!)`
-      : ''
+    ` Scores filled: ${chalk[
+      totalScoresFilled === totalScoresRequired ? 'green' : 'yellow'
+    ](`${totalScoresFilled} out of ${totalScoresRequired}`)}`
   )
-
-  console.log('')
-  console.log(' # Scores')
-  console.log('')
-
-  const names = getNames(goals.data.goals)
-
-  const results = names.map(name => {
-    const scores = flattenedGoals
-      .map(goal => {
-        if (goal.owner === name) {
-          return { value: goal.ownerRating, subgoal: goal.subgoal }
-        }
-        if (goal.advisor === name) {
-          return { value: goal.advisorRating, subgoal: goal.subgoal }
-        }
-        return null
-      })
-      .filter(v => v !== null)
-
-    const validScores = scores.filter(score => score.value > -1)
-
-    const missing = scores.length - validScores.length
-
-    return {
-      name,
-      validScores,
-      scores,
-      missing,
-      finalScore: finalScore(validScores),
-    }
-  })
-
-  const finalScores = results.filter(result => result.missing === 0)
-  const partialScores = results.filter(
-    result => result.missing > 0 && result.validScores.length > 0
-  )
-  const noScores = results.filter(result => result.validScores.length === 0)
-
-  if (finalScores.length > 0) {
-    console.log('')
-    console.log(' ## Final scores')
-    finalScores.forEach(({ name, finalScore, validScores, missing }) => {
-      console.log('')
-      console.log(` ${name} => ${finalScore}`)
-    })
-  }
-
-  if (partialScores.length > 0) {
-    console.log('')
-    console.log(' ## Partial scores')
-    partialScores.forEach(
-      ({ name, finalScore, validScores, scores, missing }) => {
-        console.log('')
-        console.log(
-          ` ${name} => ${finalScore} (using ${validScores.length} of ${
-            scores.length
-          } scores)`
-        )
-      }
-    )
-  }
-
-  if (noScores.length > 0) {
-    console.log('')
-    console.log(' ## No scores yet')
-    noScores.forEach(({ name }) => {
-      console.log('')
-      console.log(` ${name} `)
-    })
-  }
 }
 
 main()

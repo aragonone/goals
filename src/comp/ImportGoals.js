@@ -2,7 +2,7 @@ import React, { useCallback } from 'react'
 import Dropzone from 'react-dropzone'
 import { palette } from '../palette'
 import { Highlight } from './Highlight'
-import { isGoals } from '../goals'
+import { isJsonGoals, goalsFromJsonGoals } from '../goals'
 
 const goalsFromFile = async file =>
   new Promise((resolve, reject) => {
@@ -23,11 +23,11 @@ const goalsFromFile = async file =>
       throw invalidFormat
     }
 
-    if (!isGoals(data)) {
+    if (!isJsonGoals(data)) {
       throw invalidFormat
     }
 
-    return data.goals
+    return goalsFromJsonGoals(data)
   })
 
 export const ImportGoals = ({ onGoals }) => {

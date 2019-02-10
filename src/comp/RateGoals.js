@@ -8,16 +8,28 @@ import { Highlight } from './Highlight'
 
 const plural = (value, singular, plural) => (value > 1 ? plural : singular)
 
-const getRating = (ratings, id) => {
+const getGoalRating = (ratings, id) => {
   const rating = ratings.find(rating => rating[0] === id)
-  return rating ? rating[1] : -1
+  return rating ? rating[1] : []
 }
 
-const setRating = (ratings, id, value) =>
-  ratings.map(rating => (rating[0] === id ? [id, value] : rating))
+const setScore = (ratings, goalId, name, score) =>
+  ratings.map(goal =>
+    goal[0] === goalId
+      ? [
+          goal[0],
+          goal[1].map(rating => (rating[0] === name ? [name, score] : rating)),
+        ]
+      : goal
+  )
 
 export const RateGoals = ({ name, goals, onBack, onValidate }) => {
-  const [ratings, setRatings] = useState(goals.map(({ id }) => [id, -1]))
+  const [ratings, setRatings] = useState(
+    goals.map(({ id, ratingNames }) => [
+      id,
+      ratingNames.map(name => [name, -1]),
+    ])
+  )
   return (
     <div>
       <h2
@@ -33,14 +45,16 @@ export const RateGoals = ({ name, goals, onBack, onValidate }) => {
         related to <Highlight>{name}</Highlight>
       </h2>
       <div>
-        {goals.map(goal => (
+        {goals.map((goal, i) => (
           <RateGoal
             key={goal.id}
             name={name}
             goal={goal}
-            rating={getRating(ratings, goal.id)}
-            onUpdate={value => {
-              setRatings(setRating(ratings, goal.id, value))
+            goals={goals}
+            even={i % 2}
+            rating={getGoalRating(ratings, goal.id)}
+            onUpdate={(name, score) => {
+              setRatings(setScore(ratings, goal.id, name, score))
             }}
           />
         ))}
