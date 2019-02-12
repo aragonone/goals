@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "bin": "./bin/aragon-goals",
   "scripts": {
-    "build": "parcel build public/index.html --out-dir bundle && cp -r public/favicon* bundle/",
+    "build": "parcel build public/index.html --out-dir bundle --public-url . && cp -r public/favicon* bundle/",
     "build:node": "mkdir -p ./node-lib && babel src/goals.js --out-file ./node-lib/goals.js",
     "deploy": "yarn build && gh-pages -d bundle",
     "prepare": "yarn build:node",
