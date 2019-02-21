@@ -60,7 +60,7 @@ const getResultsByName = (names, goals, ratings, founders) =>
     const scoresRequired = getRatingsRequired(name, goals, founders)
 
     const [total, divider] = scores.reduce(
-      ([total, divider], score) => [total + score[0], divider + score[1]],
+      ([total, divider], score) => [total + score[0] * score[1], divider + score[1]],
       [0, 0]
     )
 
